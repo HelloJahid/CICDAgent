@@ -1,0 +1,19 @@
+# Project tooling config for the Route Demand Assistant.
+# Kept minimal on purpose: the app is the cargo, the pipeline is the star.
+
+[tool.ruff]
+# The CI "lint" job runs `ruff check` and `ruff format --check` against this.
+line-length = 100
+target-version = "py312"
+src = ["app"]
+
+[tool.ruff.lint]
+# A small, sensible rule set: pycodestyle errors/warnings, pyflakes,
+# import sorting, bugbear, and pyupgrade.
+select = ["E", "W", "F", "I", "B", "UP"]
+
+[tool.pytest.ini_options]
+# Run from the repo root so `import app...` resolves without extra path hacks.
+pythonpath = ["."]
+testpaths = ["app/tests"]
+addopts = "-q"
