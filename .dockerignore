@@ -1,0 +1,31 @@
+# Anything listed here is excluded from the Docker build context, which keeps
+# builds fast and the image small. Mirrors .gitignore plus build-only excludes.
+
+# Version control and CI config (not needed inside the image)
+.git/
+.gitignore
+.github/
+
+# Local Python environment and caches
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Not needed at runtime
+app/tests/
+docs/
+infra/
+*.md
+
+# Secrets and agent/local files (defence in depth - already git-ignored too)
+.env
+.env.*
+.claude/
+CLAUDE.md
+
+# The build files themselves
+Dockerfile
+.dockerignore
