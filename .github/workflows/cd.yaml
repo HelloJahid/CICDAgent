@@ -56,7 +56,7 @@ jobs:
       - run: pytest
 
   build-push:
-    name: Build and push image to ECR
+    name: Build, push, and deploy
     needs: [lint, test]
     runs-on: ubuntu-latest
     steps:
@@ -94,3 +94,13 @@ jobs:
           # supported"). Disabling both keeps it to a single Docker manifest.
           provenance: false
           sbom: false
+
+      # Deploy: point the Lambda at the freshly pushed image and wait for the
+      # update to finish. The pipeline owns image updates (Terraform ignores
+      # image_uri drift). The function name matches Terraform's project_name.
+      - name: Deploy new image to Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name route-demand-assistant \
+            --image-uri ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
+          aws lambda wait function-updated --function-name route-demand-assistant
