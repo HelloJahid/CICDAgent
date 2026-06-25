@@ -104,3 +104,14 @@ jobs:
             --function-name route-demand-assistant \
             --image-uri ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
           aws lambda wait function-updated --function-name route-demand-assistant
+
+      # Verify (smoke test): hit the live /ping and fail the deploy if it is not
+      # healthy. --fail makes curl exit non-zero on an HTTP error; --retry rides
+      # out the container cold start.
+      - name: Smoke test the live endpoint
+        run: |
+          URL=$(aws lambda get-function-url-config \
+            --function-name route-demand-assistant \
+            --query FunctionUrl --output text)
+          echo "Pinging ${URL}ping"
+          curl --fail --show-error --retry 5 --retry-delay 3 --retry-connrefused "${URL}ping"

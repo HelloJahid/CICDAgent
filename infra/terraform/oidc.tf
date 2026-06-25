@@ -90,6 +90,8 @@ data "aws_iam_policy_document" "pipeline_permissions" {
     sid = "LambdaDeploy"
     actions = [
       "lambda:GetFunction",
+      "lambda:GetFunctionConfiguration", # used by the `wait function-updated` poller
+      "lambda:GetFunctionUrlConfig",     # used by the post-deploy smoke test to find the URL
       "lambda:UpdateFunctionCode",
       "lambda:PublishVersion",
       "lambda:GetAlias",
