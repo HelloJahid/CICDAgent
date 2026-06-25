@@ -140,6 +140,17 @@ jobs:
           echo "Pinging ${URL}ping"
           curl --fail --show-error --retry 5 --retry-delay 3 --retry-connrefused "${URL}ping"
 
+      # Success alert for the meaningful event: a live production deploy. Runs
+      # only if every step above (including the smoke test) passed.
+      - name: Notify Slack of successful production deploy
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.JAHID_SLACK_WEBHOOK_URL }}
+        run: |
+          RUN_URL="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          curl -sS -X POST -H 'Content-type: application/json' \
+            --data "{\"text\":\":white_check_mark: Deployed *${{ github.repository }}* commit \`${{ github.sha }}\` to PRODUCTION\n${RUN_URL}\"}" \
+            "$SLACK_WEBHOOK_URL"
+
   # Failure notification: runs only if any job above failed, and posts an alert
   # to Slack via a plain curl to the webhook (kept as a secret, not a variable).
   # No third-party action, so no extra supply-chain surface.
