@@ -67,12 +67,24 @@ jobs:
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      - name: Build the container image (no push)
+      - name: Build the container image (loaded locally, not pushed)
         uses: docker/build-push-action@v6
         with:
           context: .
           push: false
+          load: true # load into the local Docker daemon so Trivy can scan it
           tags: route-demand-assistant:ci-${{ github.sha }}
           # Reuse unchanged layers (e.g. the pip-install layer) across runs.
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      # Security scan: fail the build on fixable HIGH/CRITICAL vulnerabilities.
+      # Pinned to a commit SHA (not a tag) because trivy-action's tags were once
+      # hijacked in a supply-chain attack - pinning the SHA is the safe practice.
+      - name: Scan image for vulnerabilities (Trivy)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: route-demand-assistant:ci-${{ github.sha }}
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          ignore-unfixed: true
