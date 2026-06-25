@@ -1,9 +1,9 @@
-# Continuous Deployment: the back half of the pipeline.
+# Continuous Deployment: build once, then promote through environments.
 #
-# On a push to main (i.e. a merged change), re-verify with lint + test, then
-# build the image, tag it with the git SHA, and PUSH it to ECR using keyless
-# OIDC auth. Deploying the image to Lambda is added in a later step, once the
-# function exists.
+# On a push to main: lint + test, build & push a SHA-tagged image to ECR, then
+# deploy to STAGING automatically and verify it. Deploying to PRODUCTION is
+# gated behind a manual approval - the `production` GitHub Environment has a
+# required reviewer - so a human decides when a change goes live.
 
 name: CD
 
@@ -19,10 +19,7 @@ on:
       - ".github/workflows/cd.yaml"
   workflow_dispatch: {}
 
-# id-token: write is REQUIRED for OIDC - it lets this workflow request the signed
-# identity token that AWS STS exchanges for temporary credentials. Without it,
-# the configure-aws-credentials step cannot authenticate. contents: read is all
-# the rest of the workflow needs.
+# id-token: write is required for keyless OIDC auth to AWS.
 permissions:
   contents: read
   id-token: write
@@ -56,59 +53,93 @@ jobs:
       - run: pytest
 
   build-push:
-    name: Build, push, and deploy
+    name: Build and push image
     needs: [lint, test]
     runs-on: ubuntu-latest
+    # Expose the exact image URI so both deploy jobs ship the very same image.
+    outputs:
+      image: ${{ steps.image.outputs.uri }}
     steps:
       - name: Check out the code
         uses: actions/checkout@v4
 
-      # Assume the IAM role via OIDC. No access keys anywhere - GitHub presents a
-      # signed token, AWS verifies it against the trust policy, and hands back
-      # short-lived credentials for this run only.
       - name: Configure AWS credentials (OIDC, no keys)
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      # Docker-login to our private ECR registry using those temporary creds.
       - name: Log in to Amazon ECR
         id: ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Compute the image URI
+        id: image
+        run: echo "uri=${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}" >> "$GITHUB_OUTPUT"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # Build and push, tagged with the commit SHA so every image maps to one
-      # exact commit. registry comes from the ECR login step's output.
-      - name: Build and push (tagged with the git SHA)
+      - name: Build and push (Docker v2 manifest for Lambda)
         uses: docker/build-push-action@v6
         with:
           context: .
           push: true
-          tags: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
-          # AWS Lambda only accepts a plain Docker v2 image manifest. Buildx
-          # otherwise adds provenance/SBOM attestations that turn the push into
-          # an OCI manifest index, which Lambda rejects ("media type not
-          # supported"). Disabling both keeps it to a single Docker manifest.
+          tags: ${{ steps.image.outputs.uri }}
           provenance: false
           sbom: false
 
-      # Deploy: point the Lambda at the freshly pushed image and wait for the
-      # update to finish. The pipeline owns image updates (Terraform ignores
-      # image_uri drift). The function name matches Terraform's project_name.
-      - name: Deploy new image to Lambda
+  # Auto-deploys to staging and verifies it. Tied to the `staging` environment.
+  deploy-staging:
+    name: Deploy to staging
+    needs: build-push
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - name: Configure AWS credentials (OIDC, no keys)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy image to the staging Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name route-demand-assistant-staging \
+            --image-uri ${{ needs.build-push.outputs.image }}
+          aws lambda wait function-updated --function-name route-demand-assistant-staging
+
+      - name: Smoke test staging
+        run: |
+          URL=$(aws lambda get-function-url-config \
+            --function-name route-demand-assistant-staging \
+            --query FunctionUrl --output text)
+          echo "Pinging ${URL}ping"
+          curl --fail --show-error --retry 5 --retry-delay 3 --retry-connrefused "${URL}ping"
+
+  # Deploys the SAME image to production - but only after manual approval, because
+  # the `production` environment has a required reviewer. needs build-push too so
+  # it can read the image URI output.
+  deploy-production:
+    name: Deploy to production
+    needs: [build-push, deploy-staging]
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - name: Configure AWS credentials (OIDC, no keys)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy image to the production Lambda
         run: |
           aws lambda update-function-code \
             --function-name route-demand-assistant \
-            --image-uri ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
+            --image-uri ${{ needs.build-push.outputs.image }}
           aws lambda wait function-updated --function-name route-demand-assistant
 
-      # Verify (smoke test): hit the live /ping and fail the deploy if it is not
-      # healthy. --fail makes curl exit non-zero on an HTTP error; --retry rides
-      # out the container cold start.
-      - name: Smoke test the live endpoint
+      - name: Smoke test production
         run: |
           URL=$(aws lambda get-function-url-config \
             --function-name route-demand-assistant \

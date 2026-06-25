@@ -101,9 +101,10 @@ data "aws_iam_policy_document" "pipeline_permissions" {
     # Constructed ARN (not a reference to the resource) so this policy is valid
     # even before the Lambda exists - the role is simply allowed to act on the
     # function ARN that will appear after the bootstrap.
+    # Wildcard covers both functions (production + "-staging") and their
+    # versions/aliases, still scoped to this project's Lambdas only.
     resources = [
-      "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${var.project_name}",
-      "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${var.project_name}:*",
+      "arn:aws:lambda:${var.aws_region}:${data.aws_caller_identity.current.account_id}:function:${var.project_name}*",
     ]
   }
 }
