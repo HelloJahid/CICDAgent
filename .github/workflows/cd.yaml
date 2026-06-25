@@ -88,3 +88,9 @@ jobs:
           context: .
           push: true
           tags: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
+          # AWS Lambda only accepts a plain Docker v2 image manifest. Buildx
+          # otherwise adds provenance/SBOM attestations that turn the push into
+          # an OCI manifest index, which Lambda rejects ("media type not
+          # supported"). Disabling both keeps it to a single Docker manifest.
+          provenance: false
+          sbom: false
