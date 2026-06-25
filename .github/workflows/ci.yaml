@@ -73,3 +73,6 @@ jobs:
           context: .
           push: false
           tags: route-demand-assistant:ci-${{ github.sha }}
+          # Reuse unchanged layers (e.g. the pip-install layer) across runs.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
