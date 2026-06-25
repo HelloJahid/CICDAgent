@@ -1,0 +1,90 @@
+# Continuous Deployment: the back half of the pipeline.
+#
+# On a push to main (i.e. a merged change), re-verify with lint + test, then
+# build the image, tag it with the git SHA, and PUSH it to ECR using keyless
+# OIDC auth. Deploying the image to Lambda is added in a later step, once the
+# function exists.
+
+name: CD
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "app/**"
+      - "Dockerfile"
+      - ".dockerignore"
+      - "requirements-dev.txt"
+      - "pyproject.toml"
+      - ".github/workflows/cd.yaml"
+  workflow_dispatch: {}
+
+# id-token: write is REQUIRED for OIDC - it lets this workflow request the signed
+# identity token that AWS STS exchanges for temporary credentials. Without it,
+# the configure-aws-credentials step cannot authenticate. contents: read is all
+# the rest of the workflow needs.
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  lint:
+    name: Lint (ruff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: ruff format --check .
+
+  test:
+    name: Test (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-dev.txt
+      - run: pip install -r requirements-dev.txt
+      - run: pytest
+
+  build-push:
+    name: Build and push image to ECR
+    needs: [lint, test]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the code
+        uses: actions/checkout@v4
+
+      # Assume the IAM role via OIDC. No access keys anywhere - GitHub presents a
+      # signed token, AWS verifies it against the trust policy, and hands back
+      # short-lived credentials for this run only.
+      - name: Configure AWS credentials (OIDC, no keys)
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      # Docker-login to our private ECR registry using those temporary creds.
+      - name: Log in to Amazon ECR
+        id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Build and push, tagged with the commit SHA so every image maps to one
+      # exact commit. registry comes from the ECR login step's output.
+      - name: Build and push (tagged with the git SHA)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ${{ steps.ecr.outputs.registry }}/${{ vars.ECR_REPOSITORY }}:${{ github.sha }}
