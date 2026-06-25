@@ -78,6 +78,9 @@ jobs:
           tags: ${{ steps.image.outputs.uri }}
           provenance: false
           sbom: false
+          # Reuse unchanged layers (e.g. the pip-install layer) across runs.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
 
   # Auto-deploys to staging and verifies it. Tied to the `staging` environment.
   deploy-staging:
